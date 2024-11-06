@@ -1,7 +1,7 @@
 # Proxy Server Integration Architecture
 
 ## Overview
-HinD supports multiple reverse proxy implementations while maintaining backward compatibility with the existing Caddy server setup. This document outlines the architecture and implementation details.
+HinD supports multiple reverse proxy implementations with a focus on native integrations and simplicity while maintaining backward compatibility. This document outlines the architecture and implementation strategy.
 
 ## Feature Flags
 
@@ -15,6 +15,22 @@ PROXY_OPTS=""              # Additional proxy-specific options
 PROXY_DEBUG="0"           # Enable debug logging for proxy server
 ```
 
+## Architecture
+
+### Key Components
+1. **Service Discovery**
+   - Traefik: Direct Consul Catalog integration
+   - Caddy: Consul-template integration (legacy)
+
+2. **Configuration Management**
+   - Traefik: Native dynamic configuration via Consul
+   - Caddy: File-based configuration with template rendering
+
+3. **TLS Management**
+   - Automatic certificate management
+   - Shared certificate storage location
+   - Common TLS security settings
+
 ## Directory Structure
 ```
 hind/
@@ -24,160 +40,73 @@ hind/
 │   │   │   ├── tls.conf      # Common TLS settings
 │   │   │   └── headers.conf  # Common security headers
 │   │   ├── caddy/           # Caddy-specific configs
-│   │   │   ├── Caddyfile.ctmpl
-│   │   │   └── snippets/
+│   │   │   └── Caddyfile.ctmpl
 │   │   └── traefik/         # Traefik-specific configs
-│   │       ├── traefik.toml.ctmpl
-│   │       └── dynamic/
+│   │       └── traefik.toml
 │   └── supervisord.d/       # Supervisor config fragments
 │       ├── caddy.conf
 │       └── traefik.conf
-├── bin/
-│   ├── proxy/
-│   │   ├── start-proxy.sh    # Proxy server launcher
-│   │   └── reload-proxy.sh   # Graceful config reload
-│   └── lib/
-│       └── proxy-utils.sh    # Common proxy utilities
 └── docs/
     └── proxy/
         ├── caddy.md         # Caddy-specific documentation
         └── traefik.md       # Traefik-specific documentation
 ```
 
-## Implementation Details
+## Implementation Strategy
 
-### 1. Proxy Server Interface
-Create `bin/proxy/start-proxy.sh`:
-```bash
-#!/bin/bash
-set -eu
-source /app/bin/lib/proxy-utils.sh
+### Phase 1: Native Traefik Integration
+1. **Direct Consul Integration**
+   - Native service discovery without consul-template
+   - Real-time configuration updates
+   - Built-in service mesh support
 
-# Load proxy-specific environment
-load_proxy_env
+2. **Configuration Management**
+   - Dynamic provider configuration
+   - Consul KV store integration
+   - Automatic service registration
 
-case "$PROXY_SERVER" in
-  "caddy")
-    setup_caddy_environment
-    exec /usr/bin/caddy run --config /etc/proxy/caddy/Caddyfile
-    ;;
-  "traefik")
-    setup_traefik_environment
-    exec /usr/bin/traefik --configfile=/etc/proxy/traefik/traefik.toml
-    ;;
-esac
-```
+3. **Legacy Support**
+   - Maintain existing Caddy implementation
+   - Ensure smooth transition path
+   - No breaking changes for current users
 
-### 2. Configuration Management
-Create `bin/lib/proxy-utils.sh`:
-```bash
-#!/bin/bash
+### Phase 2: Enhanced Features
+1. **Service Mesh Integration**
+   - Native Consul Connect support
+   - Automatic mTLS
+   - Service-to-service communication
 
-load_proxy_env() {
-  # Load common settings
-  source /etc/proxy/common/env
+2. **Advanced Traffic Management**
+   - Circuit breakers
+   - Rate limiting
+   - Load balancing strategies
 
-  # Load proxy-specific settings
-  if [ -f "/etc/proxy/${PROXY_SERVER}/env" ]; then
-    source "/etc/proxy/${PROXY_SERVER}/env"
-  fi
+### Phase 3: Caddy Evolution
+1. **Research Native Integration**
+   - Evaluate Caddy's native service discovery
+   - Plan migration from consul-template
+   - Maintain feature parity
+
+## Service Configuration
+
+### Nomad Job Integration
+```hcl
+service {
+  name = "webapp"
+  port = "http"
+  
+  tags = [
+    "traefik.enable=true",
+    "traefik.http.routers.webapp.rule=Host(`webapp.example.com`)"
+  ]
+
+  check {
+    type     = "http"
+    path     = "/health"
+    interval = "10s"
+    timeout  = "2s"
+  }
 }
-
-setup_caddy_environment() {
-  export CERTS_DIR="/pv/CERTS"
-  mkdir -p "$CERTS_DIR"
-  ln -sf "$CERTS_DIR" /root/.local/share/caddy
-}
-
-setup_traefik_environment() {
-  export CERTS_DIR="/pv/CERTS"
-  mkdir -p "$CERTS_DIR"
-  touch "$CERTS_DIR/acme.json"
-  chmod 600 "$CERTS_DIR/acme.json"
-}
-```
-
-### 3. Supervisor Integration
-Create `etc/supervisord.d/proxy-base.conf`:
-```ini
-[program:proxy]
-command=/app/bin/proxy/start-proxy.sh
-autorestart=true
-startsecs=10
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-
-[program:consul-template]
-command=/app/bin/proxy/start-consul-template.sh
-autorestart=true
-startsecs=10
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-```
-
-### 4. Consul Template Integration
-Create `bin/proxy/start-consul-template.sh`:
-```bash
-#!/bin/bash
-set -eu
-source /app/bin/lib/proxy-utils.sh
-
-load_proxy_env
-
-TEMPLATE_SRC="/etc/proxy/${PROXY_SERVER}/template.ctmpl"
-TEMPLATE_DEST="/etc/proxy/${PROXY_SERVER}/config"
-RELOAD_CMD="/app/bin/proxy/reload-proxy.sh"
-
-exec /usr/bin/consul-template \
-  -template "$TEMPLATE_SRC:$TEMPLATE_DEST:$RELOAD_CMD"
-```
-
-### 5. Dockerfile Updates
-```dockerfile
-# Add to existing Dockerfile
-ARG PROXY_SERVER=caddy
-
-# Install base proxy utilities
-COPY bin/proxy /app/bin/proxy/
-COPY bin/lib   /app/bin/lib/
-RUN chmod +x /app/bin/proxy/* /app/bin/lib/*
-
-# Install selected proxy server
-RUN case "$PROXY_SERVER" in \
-      "caddy") \
-        install_caddy \
-        ;; \
-      "traefik") \
-        install_traefik \
-        ;; \
-    esac
-
-# Copy proxy configurations
-COPY etc/proxy /etc/proxy/
-```
-
-## Migration Guide
-
-### For Existing Installations
-1. No changes required for current Caddy users
-2. Environment variables remain backward compatible
-3. Existing Caddy configurations continue to work
-
-### Switching to Traefik
-```bash
-# During installation
-curl -sS https://internetarchive.github.io/hind/install.sh | \
-  sudo sh -s -- -e PROXY_SERVER=traefik
-
-# Or update existing installation
-sudo podman stop hind
-sudo podman rm hind
-export PROXY_SERVER=traefik
-./install.sh
 ```
 
 ## Feature Comparison
@@ -185,80 +114,109 @@ export PROXY_SERVER=traefik
 | Feature | Caddy | Traefik |
 |---------|-------|---------|
 | Auto HTTPS | ✓ | ✓ |
-| Consul Integration | ✓ | ✓ |
+| Native Consul Integration | - | ✓ |
+| Service Mesh Support | - | ✓ |
 | Dashboard | - | ✓ |
 | Metrics | Basic | Prometheus |
-| Config Format | Caddyfile | TOML/YAML |
+| Dynamic Config | via template | Native |
 | Hot Reload | ✓ | ✓ |
-| Access Logs | ✓ | ✓ |
-| Rate Limiting | ✓ | ✓ |
 | Circuit Breaker | - | ✓ |
-| Middleware | Limited | Extensive |
+| Rate Limiting | ✓ | ✓ |
+
+## Security Considerations
+
+1. **Access Control**
+   - Consul ACLs for service discovery
+   - API endpoint security
+   - Metrics exposure control
+
+2. **TLS Management**
+   - Certificate storage security
+   - Automatic renewal
+   - Modern TLS configurations
+
+3. **Network Security**
+   - Service mesh isolation
+   - Zero-trust networking
+   - Header security
+
+## Monitoring and Observability
+
+### Metrics
+- Native Prometheus integration
+- Service discovery metrics
+- Proxy performance metrics
+
+### Health Checks
+- Direct health reporting
+- Custom check definitions
+- Integration with Consul health system
 
 ## Testing Requirements
 
 ### Functional Testing
-- [ ] Basic HTTP/HTTPS serving
-- [ ] TLS certificate generation
 - [ ] Service discovery
-- [ ] Configuration reloading
-- [ ] Access logging
-- [ ] Metrics collection
+- [ ] Configuration updates
+- [ ] TLS management
+- [ ] Health checks
+- [ ] Load balancing
 
 ### Integration Testing
-- [ ] Consul service registration
-- [ ] Template rendering
-- [ ] Health checks
-- [ ] Proxy selection
-- [ ] Environment variable handling
+- [ ] Consul integration
+- [ ] Service mesh functionality
+- [ ] Metrics collection
+- [ ] Alert triggering
 
 ### Performance Testing
-- [ ] Request latency
-- [ ] Memory usage
-- [ ] CPU utilization
-- [ ] Connection handling
-- [ ] TLS handshake performance
+- [ ] Service discovery latency
+- [ ] Configuration update speed
+- [ ] Resource utilization
+- [ ] High availability
 
-### Migration Testing
-- [ ] Clean installation
-- [ ] Configuration conversion
-- [ ] Certificate migration
-- [ ] Service continuity
+## Migration Guide
 
-## Security Considerations
+### For Existing Users
+1. No immediate action required
+2. Current Caddy setups remain supported
+3. Optional opt-in to Traefik features
 
-1. Certificate Management
-   - Secure storage location
-   - Proper permissions
-   - Automatic renewal
-
-2. Access Control
-   - Dashboard security
-   - API endpoints
-   - Metrics exposure
-
-3. Network Security
-   - Port exposure
-   - TLS configuration
-   - Header security
-
-## Monitoring and Debugging
-
-### Logs
-Both proxy servers write logs to stdout/stderr, captured by supervisord:
+### Switching to Traefik
 ```bash
-# View proxy logs
-sudo podman exec hind supervisorctl tail -f proxy
-
-# View consul-template logs
-sudo podman exec hind supervisorctl tail -f consul-template
+# During installation
+export PROXY_SERVER=traefik
+./install.sh
 ```
 
-### Metrics
-- Caddy: Basic metrics at `/-/metrics`
-- Traefik: Prometheus metrics at `/metrics`
+## Future Considerations
 
-### Health Checks
-Both implementations provide health check endpoints:
-- Caddy: `/-/health`
-- Traefik: `/ping`
+1. **Service Mesh Evolution**
+   - Enhanced Consul Connect integration
+   - Additional security features
+   - Advanced routing capabilities
+
+2. **Monitoring Improvements**
+   - Extended metrics
+   - Better debugging tools
+   - Enhanced logging
+
+3. **Configuration Management**
+   - Simplified setup process
+   - Better defaults
+   - Enhanced documentation
+
+## Support and Maintenance
+
+1. **Documentation**
+   - Feature comparison guide
+   - Migration tutorials
+   - Troubleshooting guides
+
+2. **Testing**
+   - Automated test suite
+   - Performance benchmarks
+   - Security scanning
+
+3. **Community**
+   - Feature request process
+   - Bug reporting
+   - Contributing guidelines
