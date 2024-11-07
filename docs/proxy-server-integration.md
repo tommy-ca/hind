@@ -119,22 +119,68 @@ traefik --configfile=/etc/traefik/traefik.yaml
 
 ## Service Configuration
 
+### Migration from Caddy to Traefik Tags
+The following table shows equivalent service registration patterns between Caddy and Traefik:
+
+| Caddy Tag | Traefik Equivalent | Description |
+|-----------|-------------------|-------------|
+| `urlprefix-app.example.com/` | `traefik.http.routers.app.rule=Host(\`app.example.com\`)` | Host-based routing |
+| `urlprefix-/api/` | `traefik.http.routers.api.rule=PathPrefix(\`/api/\`)` | Path-based routing |
+| `urlprefix-app.example.com/api/` | `traefik.http.routers.app.rule=Host(\`app.example.com\`) && PathPrefix(\`/api/\`)` | Combined host/path |
+| `urlprefix-:8080/` | `traefik.http.services.app.loadbalancer.server.port=8080` | Custom port |
+
 ### Nomad Job Specifications
 ```hcl
+# Example service with both Caddy (legacy) and Traefik tags
 service {
   name = "webapp"
   port = "http"
   
   tags = [
-    # Current Caddy format
+    # Legacy Caddy format (will be ignored by Traefik)
     "urlprefix-webapp.example.com/",
     
-    # New Traefik format
+    # Traefik format
     "traefik.enable=true",
-    "traefik.http.routers.webapp.rule=Host(`webapp.example.com`)"
+    "traefik.http.routers.webapp.rule=Host(`webapp.example.com`)",
+    "traefik.http.services.webapp.loadbalancer.server.port=8080"
+  ]
+}
+
+# Example with path-based routing
+service {
+  name = "api"
+  port = "http"
+  
+  tags = [
+    # Legacy Caddy format
+    "urlprefix-/api/v1/",
+    
+    # Traefik format
+    "traefik.enable=true",
+    "traefik.http.routers.api.rule=PathPrefix(`/api/v1/`)"
   ]
 }
 ```
+
+### Migration Validation Steps
+1. Add Traefik tags alongside existing Caddy tags
+2. Set PROXY_SERVER=traefik to test new configuration
+3. Verify routes work as expected:
+   ```bash
+   # Test host-based routing
+   curl -H "Host: webapp.example.com" localhost
+   
+   # Test path-based routing
+   curl localhost/api/v1/
+   ```
+4. Remove legacy Caddy tags once verified
+
+### Rollback Procedure
+If issues are encountered:
+1. Set PROXY_SERVER=caddy to revert to Caddy
+2. Remove Traefik tags if they cause conflicts
+3. Verify services are accessible via Caddy
 
 ## Performance Characteristics
 
