@@ -30,41 +30,23 @@ entryPoints:
 
 http:
   middlewares:
-    ip-whitelist:
-      ipWhiteList:
-        sourceRange: ${ALLOWED_REMOTE_IPS:-127.0.0.1}
-    ip-whitelist-handler:
+    security:
       chain:
         middlewares:
           - ip-whitelist
-          - forbidden-response
-
-    forbidden-response:
-      errors:
-        status:
-          - "403"
-        service: error-service
+          - secure-headers
+    ip-whitelist:
+      ipWhiteList:
+        sourceRange: ${ALLOWED_REMOTE_IPS:-127.0.0.1}
     secure-headers:
       headers:
-        accessControlAllowMethods:
-          - GET
-          - POST
-          - PUT
-          - DELETE
-          - OPTIONS
-        accessControlMaxAge: 100
-        addVaryHeader: true
         browserXssFilter: true
         contentTypeNosniff: true
-        forceSTSHeader: true
         frameDeny: true
         sslRedirect: true
         stsIncludeSubdomains: true
-        stsPreload: true
         stsSeconds: 31536000
         customFrameOptionsValue: SAMEORIGIN
-        customRequestHeaders:
-          X-Forwarded-Proto: https
     not-found:
       errors:
         status:
@@ -108,99 +90,56 @@ http:
         - ip-whitelist
 
   services:
-    default:
+    default: &service-defaults
       loadBalancer:
-        healthCheck:
-          path: /health
+        healthCheck: &health-defaults
           interval: 10s
           timeout: 5s
-          followRedirects: true
           headers:
             User-Agent: Traefik-Health-Check
-        # Add circuit breaker
         circuitBreaker:
           expression: NetworkErrorRatio() > 0.20
-        # Add retry mechanism
         retry:
           attempts: 3
           initialInterval: 100ms
-        # Existing config remains
-        servers:
-          - url: http://localhost:80
-        strategy: leastconn
         passHostHeader: true
+        
     nomad-ui:
+      <<: *service-defaults
       loadBalancer:
+        <<: *health-defaults
         healthCheck:
           path: /v1/agent/health
-          interval: 10s
-          timeout: 5s
-          headers:
-            User-Agent: Traefik-Health-Check
-        # Add circuit breaker
-        circuitBreaker:
-          expression: NetworkErrorRatio() > 0.20
-        # Add retry mechanism
-        retry:
-          attempts: 3
-          initialInterval: 100ms
-        # Existing config remains
         servers:
           - url: http://127.0.0.1:4646
-        passHostHeader: true
+
     direct-proxy:
+      <<: *service-defaults
       loadBalancer:
+        <<: *health-defaults
         healthCheck:
           path: /health
-          interval: 10s
-          timeout: 5s
-          headers:
-            User-Agent: Traefik-Health-Check
-        # Add circuit breaker
-        circuitBreaker:
-          expression: NetworkErrorRatio() > 0.20
-        # Add retry mechanism
-        retry:
-          attempts: 3
-          initialInterval: 100ms
-        # Existing config remains
         servers:
           - url: "${REVERSE_PROXY_URL:-http://localhost}"
-        passHostHeader: true
 
 providers:
-  # Primary provider (Consul)
   consulCatalog:
     prefix: traefik
     exposedByDefault: false
-    defaultRule: "Host(`{{ normalize .Name }}.{{ index .Meta \"environment\" \"default\" }}.{{ index .Meta \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
+    defaultRule: "Host(`{{ normalize .Name }}.{{ env \"DOMAIN_SUFFIX\" \"localhost\" }}`)"
     endpoint:
       address: 127.0.0.1:8500
-      scheme: http
     connectAware: true
     refreshInterval: 15s
     watch: true
-    # Add health check configurations
-    healthCheck:
-      interval: 10s
-      timeout: 5s
-      headers:
-        User-Agent: Traefik-Health-Check
-      path: /health
-      port: 0  # Use service port
-      scheme: http
-      followRedirects: true
-      method: GET
 
-  # Secondary provider (Nomad)
   nomad:
     endpoint:
       address: http://127.0.0.1:4646
-    defaultRule: "Host(`{{ normalize .Name }}.{{ index .Tags \"environment\" \"default\" }}.{{ index .Tags \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
+    defaultRule: "Host(`{{ normalize .Name }}.{{ env \"DOMAIN_SUFFIX\" \"localhost\" }}`)"
     exposedByDefault: false
     refreshInterval: 30s
     prefix: traefik
-    stale: false
     watch: true
 
 # Combined TLS and certificate configuration
