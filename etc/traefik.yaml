@@ -14,30 +14,30 @@ entryPoints:
     address: ":443"
 
 providers:
+  # Primary provider (Nomad)
   nomad:
     endpoint:
       address: "http://127.0.0.1:4646"
-    defaultRule: "Host(`{{ .Name }}.localhost`)"
+    defaultRule: "Host(`{{ normalize .Name }}.{{ env \"DOMAIN_SUFFIX\" \"localhost\" }}`)"
     exposedByDefault: false
-    # Primary provider gets faster refresh
-    refreshInterval: "{{ if eq (env \"TRAEFIK_PROVIDER_PRIMARY\") \"nomad\" }}15s{{ else }}30s{{ end }}"
+    refreshInterval: "15s"
     prefix: "traefik"
     stale: false
-    # Enable when primary
-    watch: {{ eq (env "TRAEFIK_PROVIDER_PRIMARY") "nomad" }}
+    # Always watch Nomad - it's lightweight and local
+    watch: true
 
+  # Secondary provider (Consul)
   consulCatalog:
     prefix: "traefik"
     exposedByDefault: false
-    defaultRule: "Host(`{{ .Name }}.localhost`)"
+    defaultRule: "Host(`{{ normalize .Name }}.{{ env \"DOMAIN_SUFFIX\" \"localhost\" }}`)"
     endpoint:
       address: "127.0.0.1:8500"
       scheme: "http"
     connectAware: true
-    # Primary provider gets faster refresh
-    refreshInterval: "{{ if eq (env \"TRAEFIK_PROVIDER_PRIMARY\") \"consul\" }}15s{{ else }}30s{{ end }}"
-    # Enable when primary  
-    watch: {{ eq (env "TRAEFIK_PROVIDER_PRIMARY") "consul" }}
+    refreshInterval: "15s"
+    # Always watch Consul - modern hardware can handle it
+    watch: true
 
 certificatesResolvers:
   default:
