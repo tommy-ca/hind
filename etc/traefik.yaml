@@ -47,6 +47,12 @@ http:
         stsIncludeSubdomains: true
         stsSeconds: 31536000
         customFrameOptionsValue: SAMEORIGIN
+        accessControlMaxAge: 100
+        addVaryHeader: true
+        forceSTSHeader: true
+        stsPreload: true
+        customRequestHeaders:
+          X-Forwarded-Proto: https
     not-found:
       errors:
         status:
@@ -56,15 +62,11 @@ http:
     conditional-hsts:
       headers:
         customResponseHeaders:
-          Strict-Transport-Security: "max-age=15724800; includeSubDomains"
-      middlewares:
-        - hsts-check
+          Strict-Transport-Security: max-age=15724800; includeSubDomains
     hsts-check:
       headers:
         customRequestHeaders:
-          X-HSTS: "on"
-      middlewares:
-        - hsts-filter
+          X-HSTS: on
     hsts-filter:
       plugin:
         headerCheck:
@@ -80,6 +82,11 @@ http:
         regex: ^.*$
         replacement: ${UNKNOWN_SERVICE_404}
         permanent: false
+    auth:
+      forwardAuth:
+        address: http://localhost:4646/v1/acl/validate
+        authResponseHeaders:
+          - X-Nomad-Token
 
   routers:
     catch-all:
@@ -96,7 +103,7 @@ http:
         - ip-whitelist
     direct-proxy:
       rule: "HostRegexp(`{domain:${REVERSE_PROXY:-.+}}`)"
-      service: direct-proxy
+      service: ${REVERSE_PROXY:+proxy-}
       priority: 3
       middlewares:
         - ip-whitelist
@@ -124,7 +131,7 @@ http:
         healthCheck:
           path: /v1/agent/health
         servers:
-          - url: http://127.0.0.1:4646
+          - url: http://localhost:4646
 
     direct-proxy:
       <<: *service-defaults
@@ -133,7 +140,12 @@ http:
         healthCheck:
           path: /health
         servers:
-          - url: "${REVERSE_PROXY_URL:-http://localhost}"
+          - url: ${REVERSE_PROXY_URL:-http://localhost:80}
+
+    ${REVERSE_PROXY:+proxy-}:
+      loadBalancer:
+        servers:
+          - url: http://localhost:${REVERSE_PROXY_PORT:-80}
 
 providers:
   consulCatalog:
@@ -141,14 +153,14 @@ providers:
     exposedByDefault: false
     defaultRule: "Host(`{{ normalize .Name }}.{{ env \"DOMAIN_SUFFIX\" \"localhost\" }}`)"
     endpoint:
-      address: 127.0.0.1:8500
+      address: localhost:8500
     connectAware: true
     refreshInterval: 15s
     watch: true
 
   nomad:
     endpoint:
-      address: http://127.0.0.1:4646
+      address: http://localhost:4646
     defaultRule: "Host(`{{ normalize .Name }}.{{ env \"DOMAIN_SUFFIX\" \"localhost\" }}`)"
     exposedByDefault: false
     refreshInterval: 30s
@@ -167,6 +179,10 @@ tls:
       defaultCertificate:
         certFile: ${SELF_MANAGED_CERTS:+/pv/CERTS/${DOMAIN}.crt}
         keyFile: ${SELF_MANAGED_CERTS:+/pv/CERTS/${DOMAIN}.key}
+      # Add dynamic certificate loading
+      directory:
+        path: /pv/CERTS
+        watch: true
 
 certificatesResolvers:
   default:
@@ -179,14 +195,17 @@ certificatesResolvers:
         ${ENVIRONMENT:-production} == "production"
         ? "https://acme-v02.api.letsencrypt.org/directory"
         : "https://acme-staging-v02.api.letsencrypt.org/directory"
-      onDemand: true
+      onDemand: ${ON_DEMAND_TLS_ASK:+true}
+      onHostRule: ${ON_DEMAND_TLS_ASK:+true}
       onDemandRate:
         interval: 1m
         burst: 10
 
 api:
   dashboard: true
-  insecure: true
+  insecure: false
+  middlewares:
+    - auth
 
 log:
   level: INFO
@@ -226,3 +245,8 @@ metrics:
     basicAuth:
       users:
         - metrics:${METRICS_PASSWORD}
+
+# Add resource limits section
+experimental:
+  http:
+    maxIdleConnsPerHost: 32767  # Match Consul's http_max_conns_per_client
