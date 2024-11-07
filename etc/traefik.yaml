@@ -1,0 +1,57 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+providers:
+  # Nomad provider
+  nomad:
+    endpoint:
+      address: "http://127.0.0.1:4646"
+    defaultRule: "Host(`{{ .Name }}.localhost`)"
+    exposedByDefault: false
+    refreshInterval: "15s"
+    # Optional prefix for service discovery
+    prefix: "traefik"
+    # Enable stale reads for better performance
+    stale: true
+
+  # Consul provider as fallback/alternative
+  consulCatalog:
+    prefix: "traefik"
+    exposedByDefault: false
+    defaultRule: "Host(`{{ .Name }}.localhost`)"
+    endpoint:
+      address: "127.0.0.1:8500"
+      scheme: "http"
+    connectAware: true
+    refreshInterval: "15s"
+
+certificatesResolvers:
+  default:
+    acme:
+      email: "admin@localhost"
+      storage: "/pv/CERTS/acme.json"
+      httpChallenge:
+        entryPoint: web
+
+api:
+  dashboard: true
+  insecure: true
+
+log:
+  level: "INFO"
+  format: "json"
+
+metrics:
+  prometheus: {}
