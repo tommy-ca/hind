@@ -14,17 +14,18 @@ entryPoints:
     address: ":443"
 
 providers:
-  # Primary provider based on TRAEFIK_PROVIDER_PRIMARY env var
   nomad:
     endpoint:
       address: "http://127.0.0.1:4646"
     defaultRule: "Host(`{{ .Name }}.localhost`)"
     exposedByDefault: false
+    # Primary provider gets faster refresh
     refreshInterval: "{{ if eq (env \"TRAEFIK_PROVIDER_PRIMARY\") \"nomad\" }}15s{{ else }}30s{{ end }}"
     prefix: "traefik"
     stale: false
+    # Enable when primary
+    watch: {{ eq (env "TRAEFIK_PROVIDER_PRIMARY") "nomad" }}
 
-  # Consul provider configuration
   consulCatalog:
     prefix: "traefik"
     exposedByDefault: false
@@ -33,7 +34,10 @@ providers:
       address: "127.0.0.1:8500"
       scheme: "http"
     connectAware: true
+    # Primary provider gets faster refresh
     refreshInterval: "{{ if eq (env \"TRAEFIK_PROVIDER_PRIMARY\") \"consul\" }}15s{{ else }}30s{{ end }}"
+    # Enable when primary  
+    watch: {{ eq (env "TRAEFIK_PROVIDER_PRIMARY") "consul" }}
 
 certificatesResolvers:
   default:
