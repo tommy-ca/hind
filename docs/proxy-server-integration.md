@@ -117,14 +117,23 @@ supervisor
    - Prometheus metrics endpoint
 
 4. **Environment Configuration**
-   ```bash
-   # Supported variables
-   PROXY_SERVER="caddy|traefik"    # Select proxy server (default: caddy)
-   HTTP_DISABLED=""                # Disable HTTP to HTTPS redirect
-   NOMAD_TOKEN=""                 # Token for Nomad API access
-   CONSUL_HTTP_TOKEN=""           # Token for Consul API access
-   TRAEFIK_PROVIDER_PRIMARY="nomad|consul"  # Primary service discovery (default: nomad)
-   ```
+The following environment variables control Traefik behavior:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| DOMAIN_SUFFIX | localhost | Suffix for auto-generated service domains |
+| CONSUL_HTTP_TOKEN | - | Token for Consul API access |
+| NOMAD_TOKEN | - | Token for Nomad API access |
+| TRAEFIK_API_INSECURE | false | Enable insecure API access |
+
+Services will automatically get domains in the format:
+`<service-name>.<DOMAIN_SUFFIX>`
+
+Example with custom domain:
+```bash
+export DOMAIN_SUFFIX="dev.example.com"
+# Service "api" becomes "api.dev.example.com"
+```
 
 ### Service Discovery Provider Selection (TRAEFIK_PROVIDER_PRIMARY)
 
