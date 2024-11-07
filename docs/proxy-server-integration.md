@@ -226,6 +226,82 @@ curl -s localhost:8500/v1/catalog/services
 curl -H "Host: app.local" localhost
 ```
 
+### Service Discovery Conventions
+
+Services are automatically given FQDNs following this pattern:
+`<service-name>.<environment>.<domain>`
+
+#### Nomad Service Configuration
+```hcl
+service {
+  name = "api"
+  port = "http"
+  
+  meta {
+    environment = "staging"  # Optional, defaults to "default"
+    domain = "example.com"  # Optional, uses DOMAIN_SUFFIX env var
+  }
+}
+```
+
+#### Convention-based Routing
+The system automatically generates routes based on these conventions:
+
+1. **Basic Service**
+```hcl
+service {
+  name = "api"
+}
+# Results in: api.default.localhost
+```
+
+2. **Environment-specific Service**
+```hcl
+service {
+  name = "api"
+  meta {
+    environment = "staging"
+  }
+}
+# Results in: api.staging.localhost
+```
+
+3. **Fully Qualified Service**
+```hcl
+service {
+  name = "api"
+  meta {
+    environment = "staging"
+    domain = "example.com"
+  }
+}
+# Results in: api.staging.example.com
+```
+
+#### Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| DOMAIN_SUFFIX | localhost | Default domain suffix if not specified in service meta |
+
+#### Meta Fields
+| Field | Default | Description |
+|-------|---------|-------------|
+| environment | default | Environment segment of FQDN |
+| domain | DOMAIN_SUFFIX | Domain segment of FQDN |
+
+#### Validation
+Test your service URLs:
+```bash
+# Test default environment
+curl -H "Host: api.default.localhost" localhost
+
+# Test specific environment
+curl -H "Host: api.staging.example.com" localhost
+
+# List all registered services with FQDNs
+curl -s localhost:8080/api/http/routers | jq '.[] | {name: .name, rule: .rule}'
+```
+
 ### Service Discovery Provider Selection
 
 When using Traefik, you can choose between two service discovery providers:

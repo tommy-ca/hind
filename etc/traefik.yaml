@@ -18,7 +18,7 @@ providers:
   nomad:
     endpoint:
       address: "http://127.0.0.1:4646"
-    defaultRule: "Host(`{{ normalize .Name }}.{{ env \"DOMAIN_SUFFIX\" \"localhost\" }}`)"
+    defaultRule: "Host(`{{ normalize .Name }}.{{ index .Tags \"environment\" \"default\" }}.{{ index .Tags \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
     exposedByDefault: false
     refreshInterval: "15s"
     prefix: "traefik"
@@ -30,7 +30,7 @@ providers:
   consulCatalog:
     prefix: "traefik"
     exposedByDefault: false
-    defaultRule: "Host(`{{ normalize .Name }}.{{ env \"DOMAIN_SUFFIX\" \"localhost\" }}`)"
+    defaultRule: "Host(`{{ normalize .Name }}.{{ index .Meta \"environment\" \"default\" }}.{{ index .Meta \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
     endpoint:
       address: "127.0.0.1:8500"
       scheme: "http"
