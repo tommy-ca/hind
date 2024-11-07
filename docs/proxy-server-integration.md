@@ -306,16 +306,102 @@ curl localhost:8080/api/rawdata
 ## Testing Requirements
 
 1. **Functional Tests**
-- Service discovery verification
-- Certificate management
-- Environment variable support
-- Load balancing behavior
+- Service discovery verification:
+  ```bash
+  # Verify service registration
+  curl -s localhost:8500/v1/catalog/services | jq .
+  # Check Traefik service health
+  curl -s localhost:8080/api/http/services
+  ```
+- Certificate management:
+  ```bash
+  # Verify cert presence
+  ls -l /pv/CERTS/
+  # Check cert validity
+  openssl x509 -in /pv/CERTS/cert.pem -text
+  ```
+- Environment variable validation:
+  ```bash
+  # Verify proxy selection
+  supervisorctl status
+  # Check Traefik config
+  curl localhost:8080/api/rawdata
+  ```
 
 2. **Integration Tests**
-- Multi-service deployment
-- High availability scenarios
-- Failure recovery
-- Performance benchmarks
+- Multi-service deployment:
+  ```hcl
+  # Example Nomad job with Traefik labels
+  service {
+    name = "webapp"
+    port = "http"
+    tags = [
+      "traefik.enable=true",
+      "traefik.http.routers.webapp.rule=Host(`webapp.local`)",
+      "traefik.http.services.webapp.loadbalancer.server.port=8080"
+    ]
+  }
+  ```
+- High availability testing:
+  ```bash
+  # Simulate node failure
+  supervisorctl stop traefik
+  # Verify failover
+  curl -v webapp.local
+  ```
+- Performance benchmarks:
+  ```bash
+  # Basic load test
+  ab -n 1000 -c 10 https://webapp.local/
+  ```
+
+## Troubleshooting Guide
+
+1. **Common Issues**
+
+- Service not accessible:
+  ```bash
+  # Check Traefik logs
+  supervisorctl tail traefik
+  # Verify service registration
+  curl localhost:8500/v1/health/service/webapp
+  ```
+
+- Certificate errors:
+  ```bash
+  # Check cert permissions
+  ls -l /pv/CERTS/
+  # Verify cert chain
+  openssl verify -CAfile /pv/CERTS/ca.pem /pv/CERTS/cert.pem
+  ```
+
+- Configuration issues:
+  ```bash
+  # Validate Traefik config
+  traefik --configfile=/etc/traefik.yaml --check
+  # Check dynamic config
+  curl localhost:8080/api/rawdata | jq .
+  ```
+
+2. **Health Checks**
+
+- Endpoint verification:
+  ```bash
+  # Check Traefik health
+  curl -s localhost:8080/ping
+  # Verify backend health
+  curl -s localhost:8080/api/http/services | jq '.[] | select(.status=="up")'
+  ```
+
+3. **Performance Issues**
+
+- Monitor resources:
+  ```bash
+  # Check memory usage
+  ps aux | grep traefik
+  # Monitor connections
+  netstat -ant | grep ESTABLISHED | wc -l
+  ```
 
 ## Future Considerations
 
