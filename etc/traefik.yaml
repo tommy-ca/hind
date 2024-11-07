@@ -4,36 +4,46 @@ global:
 
 entryPoints:
   web:
-    address: ":80"
+    address: :80
     http:
       redirections:
         entryPoint:
           to: websecure
           scheme: https
       middlewares:
-        - secure-headers@file
+        - ${HTTP_DISABLED:+http-disabled}@file
   websecure:
-    address: ":443"
+    address: :443
     http:
       middlewares:
+        - ip-whitelist
         - secure-headers@file
     http3:
       advertisedPort: 443
-    tls:
-      options:
-        default:
-          minVersion: "VersionTLS12"
-          preferServerCipherSuites: true
-          cipherSuites:
-            - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
-            - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
-            - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
-            - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-            - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
-            - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+    forwardedHeaders:
+      trustedIPs:
+        - "${TRUSTED_PROXIES}"
+    proxyProtocol:
+      trustedIPs:
+        - "${TRUSTED_PROXIES}"
+
 
 http:
   middlewares:
+    ip-whitelist:
+      ipWhiteList:
+        sourceRange: ${ALLOWED_REMOTE_IPS:-127.0.0.1}
+    ip-whitelist-handler:
+      chain:
+        middlewares:
+          - ip-whitelist
+          - forbidden-response
+
+    forbidden-response:
+      errors:
+        status:
+          - "403"
+        service: error-service
     secure-headers:
       headers:
         accessControlAllowMethods:
@@ -52,66 +62,215 @@ http:
         stsIncludeSubdomains: true
         stsPreload: true
         stsSeconds: 31536000
-        customFrameOptionsValue: "SAMEORIGIN"
+        customFrameOptionsValue: SAMEORIGIN
         customRequestHeaders:
-          X-Forwarded-Proto: "https"
+          X-Forwarded-Proto: https
+    not-found:
+      errors:
+        status:
+          - "404"
+        service: error-service
+        query: "/{status}.html"
+    conditional-hsts:
+      headers:
+        customResponseHeaders:
+          Strict-Transport-Security: max-age=15724800
+        customRequestHeaders:
+          X-HSTS: on
+    http-disabled:
+      headers:
+        customResponseHeaders:
+          Status: 403 Forbidden
+    redirect-unknown:
+      redirectRegex:
+        regex: ^.*$
+        replacement: ${UNKNOWN_SERVICE_404}
+        permanent: false
+
+  routers:
+    catch-all:
+      rule: "HostRegexp(`{host:.+}`)"
+      priority: 1
+      service: error-service
+      middlewares:
+        - redirect-unknown
+    nomad-ui:
+      rule: "HostRegexp(`{domain:(${FQDN}|${NOMAD_ADDR_EXTRA:+${NOMAD_ADDR_EXTRA}})}`)"
+      service: nomad-ui
+      priority: 2  # Higher than catch-all
+      middlewares:
+        - ip-whitelist
+    direct-proxy:
+      rule: "HostRegexp(`{domain:${REVERSE_PROXY:-.+}}`)"
+      service: direct-proxy
+      priority: 3
+      middlewares:
+        - ip-whitelist
+
+  services:
+    default:
+      loadBalancer:
+        healthCheck:
+          path: /health
+          interval: 10s
+          timeout: 5s
+          followRedirects: true
+          headers:
+            User-Agent: Traefik-Health-Check
+        # Add circuit breaker
+        circuitBreaker:
+          expression: NetworkErrorRatio() > 0.20
+        # Add retry mechanism
+        retry:
+          attempts: 3
+          initialInterval: 100ms
+        # Existing config remains
+        servers:
+          - url: http://localhost:80
+        strategy: leastconn
+        passHostHeader: true
+    nomad-ui:
+      loadBalancer:
+        healthCheck:
+          path: /v1/agent/health
+          interval: 10s
+          timeout: 5s
+          headers:
+            User-Agent: Traefik-Health-Check
+        # Add circuit breaker
+        circuitBreaker:
+          expression: NetworkErrorRatio() > 0.20
+        # Add retry mechanism
+        retry:
+          attempts: 3
+          initialInterval: 100ms
+        # Existing config remains
+        servers:
+          - url: http://127.0.0.1:4646
+        passHostHeader: true
+    direct-proxy:
+      loadBalancer:
+        healthCheck:
+          path: /health
+          interval: 10s
+          timeout: 5s
+          headers:
+            User-Agent: Traefik-Health-Check
+        # Add circuit breaker
+        circuitBreaker:
+          expression: NetworkErrorRatio() > 0.20
+        # Add retry mechanism
+        retry:
+          attempts: 3
+          initialInterval: 100ms
+        # Existing config remains
+        servers:
+          - url: "${REVERSE_PROXY_URL:-http://localhost}"
+        passHostHeader: true
 
 providers:
-  # Primary provider (Nomad)
-  nomad:
-    endpoint:
-      address: "http://127.0.0.1:4646"
-    defaultRule: "Host(`{{ normalize .Name }}.{{ index .Tags \"environment\" \"default\" }}.{{ index .Tags \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
-    exposedByDefault: false
-    refreshInterval: "15s"
-    prefix: "traefik"
-    stale: false
-    # Always watch Nomad - it's lightweight and local
-    watch: true
-
-  # Secondary provider (Consul)
+  # Primary provider (Consul)
   consulCatalog:
-    prefix: "traefik"
+    prefix: traefik
     exposedByDefault: false
     defaultRule: "Host(`{{ normalize .Name }}.{{ index .Meta \"environment\" \"default\" }}.{{ index .Meta \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
     endpoint:
-      address: "127.0.0.1:8500"
-      scheme: "http"
+      address: 127.0.0.1:8500
+      scheme: http
     connectAware: true
-    refreshInterval: "15s"
-    # Always watch Consul - modern hardware can handle it
+    refreshInterval: 15s
     watch: true
+    # Add health check configurations
+    healthCheck:
+      interval: 10s
+      timeout: 5s
+      headers:
+        User-Agent: Traefik-Health-Check
+      path: /health
+      port: 0  # Use service port
+      scheme: http
+      followRedirects: true
+      method: GET
+
+  # Secondary provider (Nomad)
+  nomad:
+    endpoint:
+      address: http://127.0.0.1:4646
+    defaultRule: "Host(`{{ normalize .Name }}.{{ index .Tags \"environment\" \"default\" }}.{{ index .Tags \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
+    exposedByDefault: false
+    refreshInterval: 30s
+    prefix: traefik
+    stale: false
+    watch: true
+
+# Combined TLS and certificate configuration
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      sniStrict: true
+
+  stores:
+    default:
+      defaultCertificate:
+        certFile: ${SELF_MANAGED_CERTS:+/pv/CERTS/${DOMAIN}.crt}
+        keyFile: ${SELF_MANAGED_CERTS:+/pv/CERTS/${DOMAIN}.key}
 
 certificatesResolvers:
   default:
     acme:
-      email: "admin@localhost"
-      storage: "/pv/CERTS/acme.json"
+      email: ${TLS_EMAIL:-admin@localhost}
+      storage: /pv/CERTS/acme.json
       httpChallenge:
         entryPoint: web
+      caServer: >-
+        ${ENVIRONMENT:-production} == "production"
+        ? "https://acme-v02.api.letsencrypt.org/directory"
+        : "https://acme-staging-v02.api.letsencrypt.org/directory"
+      onDemand: true
+      onDemandRate:
+        interval: 1m
+        burst: 10
 
 api:
   dashboard: true
   insecure: true
 
 log:
-  level: "INFO"
-  format: "json"
-  filePath: "/dev/stdout"
+  level: INFO
+  format: json
+  filePath: /dev/stdout
 
 accessLog:
-  filePath: "/dev/stdout"
-  format: "json"
+  filePath: /dev/stdout
+  format: json
+  bufferingSize: 100
+  filters:
+    statusCodes:
+      - 400-599
   fields:
-    defaultMode: "keep"
+    defaultMode: keep
     names:
-      ClientUsername: "drop"
+      ClientUsername: drop
     headers:
-      defaultMode: "keep"
+      defaultMode: drop
       names:
-        User-Agent: "redact"
-        Authorization: "drop"
-        Cookie: "drop"
+        User-Agent: keep
+        Authorization: drop
+        Content-Type: keep
+        X-Forwarded-For: keep
+        X-Real-IP: keep
+        X-Request-ID: keep
 
 metrics:
-  prometheus: {}
+  prometheus:
+    enabled: true
+    port: 9100
+    path: /metrics
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    addRoutersLabels: true
+    # We'll expand this when implementing OpenTelemetry
+    basicAuth:
+      users:
+        - metrics:${METRICS_PASSWORD}

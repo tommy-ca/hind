@@ -98,259 +98,263 @@ supervisor
    - Default: caddy for backward compatibility
 
 ### Traefik Configuration
-1. **Base Configuration**
-   - Located at `/etc/traefik.yaml`
-   - Native integration with Nomad and Consul
-   - No consul-template dependency
-   - Shared certificate storage at `/pv/CERTS`
+1. **Base Configuration with HTTP3**
+   ```yaml
+   global:
+     checkNewVersion: false
+     sendAnonymousUsage: false
+
+   entryPoints:
+     web:
+       address: :80
+       http:
+         redirections:
+           entryPoint:
+             to: websecure
+             scheme: https
+         middlewares:
+           - ${HTTP_DISABLED:+http-disabled}@file
+     websecure:
+       address: :443
+       http:
+         middlewares:
+           - ip-whitelist
+           - secure-headers@file
+       http3:
+         advertisedPort: 443
+       forwardedHeaders:
+         trustedIPs:
+           - "${TRUSTED_PROXIES}"
+       proxyProtocol:
+         trustedIPs:
+           - "${TRUSTED_PROXIES}"
+   ```
+
+2. **Enhanced Middleware Configuration**
+   ```yaml
+   http:
+     middlewares:
+       ip-whitelist:
+         ipWhiteList:
+           sourceRange: ${ALLOWED_REMOTE_IPS:-127.0.0.1}
+       ip-whitelist-handler:
+         chain:
+           middlewares:
+             - ip-whitelist
+             - forbidden-response
+       forbidden-response:
+         errors:
+           status:
+             - "403"
+           service: error-service
+       secure-headers:
+         headers:
+           accessControlAllowMethods:
+             - GET
+             - POST
+             - PUT
+             - DELETE
+             - OPTIONS
+           accessControlMaxAge: 100
+           addVaryHeader: true
+           browserXssFilter: true
+           contentTypeNosniff: true
+           forceSTSHeader: true
+           frameDeny: true
+           sslRedirect: true
+           stsIncludeSubdomains: true
+           stsPreload: true
+           stsSeconds: 31536000
+           customFrameOptionsValue: SAMEORIGIN
+           customRequestHeaders:
+             X-Forwarded-Proto: https
+   ```
+
+3. **Error Handling and Redirects**
+   ```yaml
+   http:
+     middlewares:
+       not-found:
+         errors:
+           status:
+             - "404"
+           service: error-service
+           query: "/{status}.html"
+       redirect-unknown:
+         redirectRegex:
+           regex: ^.*$
+           replacement: ${UNKNOWN_SERVICE_404}
+           permanent: false
+     routers:
+       catch-all:
+         rule: "HostRegexp(`{host:.+}`)"
+         priority: 1
+         service: error-service
+         middlewares:
+           - redirect-unknown
+   ```
+
+4. **Service Discovery (Consul Primary)**
+   ```yaml
+   providers:
+     # Primary provider (Consul)
+     consulCatalog:
+       prefix: traefik
+       exposedByDefault: false
+       defaultRule: "Host(`{{ normalize .Name }}.{{ index .Meta \"environment\" \"default\" }}.{{ index .Meta \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
+       endpoint:
+         address: 127.0.0.1:8500
+         scheme: http
+       connectAware: true
+       refreshInterval: 15s
+       watch: true
+
+     # Secondary provider (Nomad)
+     nomad:
+       endpoint:
+         address: http://127.0.0.1:4646
+       defaultRule: "Host(`{{ normalize .Name }}.{{ index .Tags \"environment\" \"default\" }}.{{ index .Tags \"domain\" (env \"DOMAIN_SUFFIX\" \"localhost\") }}`)"
+       exposedByDefault: false
+       refreshInterval: 30s
+       prefix: traefik
+       stale: false
+       watch: true
+   ```
+
+5. **Certificate Management**
+   ```yaml
+   tls:
+     options:
+       default:
+         minVersion: VersionTLS12
+         sniStrict: true
+       selfManaged:
+         certificates:
+           - certFile: /pv/CERTS/${DOMAIN}.crt
+             keyFile: /pv/CERTS/${DOMAIN}.key
+
+     stores:
+       default:
+         defaultCertificate:
+           certFile: ${SELF_MANAGED_CERTS:+/pv/CERTS/${DOMAIN}.crt}
+           keyFile: ${SELF_MANAGED_CERTS:+/pv/CERTS/${DOMAIN}.key}
+
+   certificatesResolvers:
+     default:
+       acme:
+         email: ${TLS_EMAIL:-admin@localhost}
+         storage: /pv/CERTS/acme.json
+         httpChallenge:
+           entryPoint: web
+         caServer: >-
+           ${ENVIRONMENT:-production} == "production"
+           ? "https://acme-v02.api.letsencrypt.org/directory"
+           : "https://acme-staging-v02.api.letsencrypt.org/directory"
+         onDemand: true
+         onDemandRate:
+           interval: 1m
+           burst: 10
+   ```
+
+### Environment Variables
+
+#### Critical Configuration
+| Variable | Default | Used By | Description | Implementation Status |
+|----------|---------|---------|-------------|---------------------|
+| DOMAIN_SUFFIX | localhost | Both | Default domain suffix for service discovery | ✅ Implemented |
+| DOMAIN | - | Both | Base domain for TLS certificates | ✅ Implemented |
+| ENVIRONMENT | production | Both | Environment (production/staging) for ACME | ✅ Implemented |
+| TLS_EMAIL | admin@localhost | Both | ACME email address for Let's Encrypt | ✅ Implemented |
+
+#### Security Configuration
+| Variable | Default | Used By | Description | Implementation Status |
+|----------|---------|---------|-------------|---------------------|
+| ALLOWED_REMOTE_IPS | 127.0.0.1 | Both | Allowed source IPs for access control | ✅ Implemented |
+| TRUSTED_PROXIES | - | Both | Trusted proxy IPs for forwarded headers | ✅ Implemented |
+| HTTP_DISABLED | - | Both | Disable plain HTTP access | ✅ Implemented |
+| SELF_MANAGED_CERTS | - | Both | Enable self-managed certificates | ✅ Implemented |
+| METRICS_PASSWORD | - | Traefik | Password for metrics endpoint | ✅ Implemented |
+
+#### Service Configuration
+| Variable | Default | Used By | Description | Implementation Status |
+|----------|---------|---------|-------------|---------------------|
+| FQDN | - | Both | Primary domain name(s) for Nomad UI | ✅ Implemented |
+| NOMAD_ADDR_EXTRA | - | Both | Additional domains for Nomad UI | ✅ Implemented |
+| REVERSE_PROXY | - | Both | Host:port pairs for direct proxying | ✅ Implemented |
+| UNKNOWN_SERVICE_404 | - | Both | Redirect URL for unknown services | ✅ Implemented |
+
+### Feature Implementation Details
+
+1. **Direct Nomad UI Access**
+   ```yaml
+   # Implemented via router configuration
+   routers:
+     nomad-ui:
+       rule: "HostRegexp(`{domain:(${FQDN}|${NOMAD_ADDR_EXTRA:+${NOMAD_ADDR_EXTRA}})}`)"
+       service: nomad-ui
+       priority: 2
+   ```
+
+2. **Direct Service Proxying**
+   ```yaml
+   # Implemented via router and service
+   routers:
+     direct-proxy:
+       rule: "HostRegexp(`{domain:${REVERSE_PROXY:-.+}}`)"
+       service: direct-proxy
+       priority: 3
+   services:
+     direct-proxy:
+       loadBalancer:
+         servers:
+           - url: "${REVERSE_PROXY_URL:-http://localhost}"
+   ```
+
+3. **TLS Configuration**
+   ```yaml
+   # Combined certificate management
+   tls:
+     options:
+       default:
+         minVersion: VersionTLS12
+         sniStrict: true
+     stores:
+       default:
+         defaultCertificate:
+           certFile: ${SELF_MANAGED_CERTS:+/pv/CERTS/${DOMAIN}.crt}
+           keyFile: ${SELF_MANAGED_CERTS:+/pv/CERTS/${DOMAIN}.key}
+   ```
+
+4. **Security Features**
+   ```yaml
+   # IP Whitelisting
+   middlewares:
+     ip-whitelist:
+       ipWhiteList:
+         sourceRange: ${ALLOWED_REMOTE_IPS:-127.0.0.1}
+   # HTTP to HTTPS Redirect
+   entryPoints:
+     web:
+       http:
+         redirections:
+           entryPoint:
+             to: websecure
+             scheme: https
+   ```
+
+### Migration Notes
+
+1. **From Caddy to Traefik**
+   - All Caddy-specific variables now have Traefik equivalents
+   - No additional scripts needed for variable parsing
+   - Direct implementation in traefik.yaml
+   - Maintained backward compatibility
 
 2. **Service Discovery**
-   - Primary: Nomad service discovery
-   - Secondary: Consul Catalog provider
-   - Automatic token handling via environment variables
-   - Default routing based on service names
-
-3. **Security Features**
-   - Automatic HTTPS redirection
-   - Built-in security headers
-   - TLS certificate management
-   - Prometheus metrics endpoint
-
-4. **Environment Configuration**
-The following environment variables control Traefik behavior:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| DOMAIN_SUFFIX | localhost | Suffix for auto-generated service domains |
-| CONSUL_HTTP_TOKEN | - | Token for Consul API access |
-| NOMAD_TOKEN | - | Token for Nomad API access |
-| TRAEFIK_API_INSECURE | false | Enable insecure API access |
-
-Services will automatically get domains in the format:
-`<service-name>.<DOMAIN_SUFFIX>`
-
-Example with custom domain:
-```bash
-export DOMAIN_SUFFIX="dev.example.com"
-# Service "api" becomes "api.dev.example.com"
-```
-
-### Service Discovery Provider Selection (TRAEFIK_PROVIDER_PRIMARY)
-
-The `TRAEFIK_PROVIDER_PRIMARY` environment variable controls which service discovery backend Traefik uses as its primary source:
-
-```bash
-TRAEFIK_PROVIDER_PRIMARY="nomad|consul"  # Default: nomad
-```
-
-#### Provider Behaviors
-
-1. **Nomad Primary** (default)
-   - Uses Nomad's service catalog as primary source
-   - Faster updates for job changes
-   - Simpler configuration with Nomad job specs
-   - Example:
-     ```bash
-     export TRAEFIK_PROVIDER_PRIMARY=nomad
-     ```
-
-2. **Consul Primary**
-   - Uses Consul's service catalog as primary source
-   - Better for multi-node service discovery
-   - More detailed health checking
-   - Example:
-     ```bash
-     export TRAEFIK_PROVIDER_PRIMARY=consul
-     ```
-
-#### When to Use Each Provider
-
-Choose **Nomad Primary** when:
-- Running single-node deployments
-- Using primarily Nomad jobs
-- Need fastest job deployment updates
-- Want simpler configuration
-
-Choose **Consul Primary** when:
-- Running multi-node deployments
-- Need advanced health checking
-- Using external service registration
-- Want richer service metadata
-
-#### Configuration Impact
-
-The provider selection affects how services should be configured:
-
-**Nomad Primary:**
-```hcl
-service {
-  name = "app"
-  tags = [
-    "traefik.enable=true",
-    "traefik.http.routers.app.rule=Host(`app.local`)"
-  ]
-}
-```
-
-**Consul Primary:**
-```hcl
-service {
-  name = "app"
-  tags = [
-    "traefik.enable=true",
-    "traefik.http.routers.app.rule=Host(`app.local`)"
-  ]
-  check {
-    type     = "http"
-    path     = "/health"
-    interval = "10s"
-  }
-}
-```
-
-#### Validation
-
-To verify your provider configuration:
-
-```bash
-# Check current provider status
-curl -s localhost:8080/api/rawdata | jq '.providers'
-
-# Verify service discovery (Nomad)
-nomad status
-
-# Verify service discovery (Consul)
-curl -s localhost:8500/v1/catalog/services
-
-# Test service routing
-curl -H "Host: app.local" localhost
-```
-
-### Service Discovery Conventions
-
-Services are automatically given FQDNs following this pattern:
-`<service-name>.<environment>.<domain>`
-
-#### Nomad Service Configuration
-```hcl
-service {
-  name = "api"
-  port = "http"
-  
-  meta {
-    environment = "staging"  # Optional, defaults to "default"
-    domain = "example.com"  # Optional, uses DOMAIN_SUFFIX env var
-  }
-}
-```
-
-#### Convention-based Routing
-The system automatically generates routes based on these conventions:
-
-1. **Basic Service**
-```hcl
-service {
-  name = "api"
-}
-# Results in: api.default.localhost
-```
-
-2. **Environment-specific Service**
-```hcl
-service {
-  name = "api"
-  meta {
-    environment = "staging"
-  }
-}
-# Results in: api.staging.localhost
-```
-
-3. **Fully Qualified Service**
-```hcl
-service {
-  name = "api"
-  meta {
-    environment = "staging"
-    domain = "example.com"
-  }
-}
-# Results in: api.staging.example.com
-```
-
-#### Environment Variables
-| Variable | Default | Description |
-|----------|---------|-------------|
-| DOMAIN_SUFFIX | localhost | Default domain suffix if not specified in service meta |
-
-#### Meta Fields
-| Field | Default | Description |
-|-------|---------|-------------|
-| environment | default | Environment segment of FQDN |
-| domain | DOMAIN_SUFFIX | Domain segment of FQDN |
-
-#### Validation
-Test your service URLs:
-```bash
-# Test default environment
-curl -H "Host: api.default.localhost" localhost
-
-# Test specific environment
-curl -H "Host: api.staging.example.com" localhost
-
-# List all registered services with FQDNs
-curl -s localhost:8080/api/http/routers | jq '.[] | {name: .name, rule: .rule}'
-```
-
-### Service Discovery Provider Selection
-
-When using Traefik, you can choose between two service discovery providers:
-
-#### Nomad Primary (Default)
-```yaml
-# Applied when TRAEFIK_PROVIDER_PRIMARY=nomad
-providers:
-  nomad:
-    endpoint: "http://127.0.0.1:4646"
-    stale: false
-    exposedByDefault: false
-  consul:
-    endpoint: "http://127.0.0.1:8500"
-    exposedByDefault: false
-    watch: true
-    refreshInterval: "30s"
-```
-
-#### Consul Primary
-```yaml
-# Applied when TRAEFIK_PROVIDER_PRIMARY=consul
-providers:
-  consul:
-    endpoint: "http://127.0.0.1:8500"
-    exposedByDefault: false
-    watch: true
-    refreshInterval: "15s"
-  nomad:
-    endpoint: "http://127.0.0.1:4646"
-    stale: false
-    exposedByDefault: false
-    refreshInterval: "30s"
-```
-
-### Process Management
-1. **Supervisor Configuration**
-   - Automatic proxy server selection
-   - Environment variable passing
-   - Graceful restarts
-   - Log streaming to stdout/stderr
-
-2. **Startup Flow**
-   ```
-   1. Supervisor starts Consul and Nomad
-   2. Selected proxy server starts based on PROXY_SERVER
-   3. Proxy connects to service discovery
-   4. Configuration auto-updates based on services
-   ```
+   - Consul is primary provider
+   - Nomad is secondary provider
+   - Both providers watched for real-time updates
+   - Consistent domain naming across providers
 
 ## Integration Strategy
 
