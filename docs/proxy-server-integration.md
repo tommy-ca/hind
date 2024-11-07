@@ -409,27 +409,48 @@ traefik --configfile=/etc/traefik/traefik.yaml
    - Preserve existing service discovery patterns
    - Keep current certificate storage location
 
-### Phase 2: Traefik Integration
-1. **Direct Consul Integration**
-   - Native service discovery without consul-template
-   - Real-time configuration updates
-   - Built-in service mesh support
+### Service Discovery Priority
 
-2. **Configuration Management**
-   - Dynamic provider configuration
-   - Consul KV store integration
-   - Automatic service registration
+1. **Consul Catalog (Primary)**
+   - 15s refresh interval
+   - Native service metadata support
+   - Real-time updates via watch
 
-### Phase 3: Feature Parity
-1. **Certificate Management**
-   - Shared certificate storage
-   - Automatic HTTPS support
-   - Let's Encrypt integration
+2. **Nomad (Secondary)**
+   - 30s refresh interval
+   - Fallback for direct Nomad services
+   - Tag-based configuration
 
-2. **Service Discovery**
-   - Compatible service tags
-   - Consistent routing rules
-   - DNS integration
+3. **Service Tag Migration**
+   | Caddy Tag | Traefik Label | Notes |
+   |-----------|---------------|-------|
+   | `urlprefix-host.com/` | `traefik.http.routers.name.rule=Host(\`host.com\`)` | Direct hostname routing |
+   | `proto=http` | `traefik.http.services.name.loadBalancer.scheme=http` | Protocol specification |
+   | `lb=least_conn` | `traefik.http.services.name.loadBalancer.strategy=leastconn` | Load balancing strategy |
+   | `redirect=308` | `traefik.http.middlewares.redirect.redirectscheme.permanent=true` | Permanent redirects |
+
+### Security Implementation Details
+
+1. **Header Security Matrix**
+   | Header | Caddy | Traefik | Notes |
+   |--------|-------|---------|-------|
+   | HSTS | Conditional (X-HSTS check) | Conditional (X-HSTS check) | Both support opt-out |
+   | Frame Options | SAMEORIGIN | SAMEORIGIN | Consistent implementation |
+   | XSS Protection | Enabled | Enabled | Both use modern browser features |
+   | Content Type Options | nosniff | nosniff | Consistent implementation |
+   | Referrer Policy | strict-origin-when-cross-origin | strict-origin-when-cross-origin | Aligned policies |
+
+2. **IP Filtering**
+   - Both implementations support CIDR notation
+   - Environment variable: ALLOWED_REMOTE_IPS
+   - Consistent 403 Forbidden response
+   - Applied before TLS termination
+
+3. **TLS Configuration**
+   - Self-managed certs path: /pv/CERTS/${DOMAIN}.[crt|key]
+   - ACME challenges via HTTP-01
+   - On-demand TLS with rate limiting
+   - Consistent certificate storage location
 
 ## Service Configuration
 
