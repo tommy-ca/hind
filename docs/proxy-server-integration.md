@@ -126,6 +126,97 @@ supervisor
    TRAEFIK_PROVIDER_PRIMARY="nomad|consul"  # Primary service discovery (default: nomad)
    ```
 
+### Service Discovery Provider Selection (TRAEFIK_PROVIDER_PRIMARY)
+
+The `TRAEFIK_PROVIDER_PRIMARY` environment variable controls which service discovery backend Traefik uses as its primary source:
+
+```bash
+TRAEFIK_PROVIDER_PRIMARY="nomad|consul"  # Default: nomad
+```
+
+#### Provider Behaviors
+
+1. **Nomad Primary** (default)
+   - Uses Nomad's service catalog as primary source
+   - Faster updates for job changes
+   - Simpler configuration with Nomad job specs
+   - Example:
+     ```bash
+     export TRAEFIK_PROVIDER_PRIMARY=nomad
+     ```
+
+2. **Consul Primary**
+   - Uses Consul's service catalog as primary source
+   - Better for multi-node service discovery
+   - More detailed health checking
+   - Example:
+     ```bash
+     export TRAEFIK_PROVIDER_PRIMARY=consul
+     ```
+
+#### When to Use Each Provider
+
+Choose **Nomad Primary** when:
+- Running single-node deployments
+- Using primarily Nomad jobs
+- Need fastest job deployment updates
+- Want simpler configuration
+
+Choose **Consul Primary** when:
+- Running multi-node deployments
+- Need advanced health checking
+- Using external service registration
+- Want richer service metadata
+
+#### Configuration Impact
+
+The provider selection affects how services should be configured:
+
+**Nomad Primary:**
+```hcl
+service {
+  name = "app"
+  tags = [
+    "traefik.enable=true",
+    "traefik.http.routers.app.rule=Host(`app.local`)"
+  ]
+}
+```
+
+**Consul Primary:**
+```hcl
+service {
+  name = "app"
+  tags = [
+    "traefik.enable=true",
+    "traefik.http.routers.app.rule=Host(`app.local`)"
+  ]
+  check {
+    type     = "http"
+    path     = "/health"
+    interval = "10s"
+  }
+}
+```
+
+#### Validation
+
+To verify your provider configuration:
+
+```bash
+# Check current provider status
+curl -s localhost:8080/api/rawdata | jq '.providers'
+
+# Verify service discovery (Nomad)
+nomad status
+
+# Verify service discovery (Consul)
+curl -s localhost:8500/v1/catalog/services
+
+# Test service routing
+curl -H "Host: app.local" localhost
+```
+
 ### Service Discovery Provider Selection
 
 When using Traefik, you can choose between two service discovery providers:
