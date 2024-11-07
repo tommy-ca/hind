@@ -9,39 +9,60 @@ HinD currently uses Caddy with consul-template for service routing in a shared c
 1. **Process Management**
 
 ```
-consul
-  ├── consul-template
-  │   └── caddy    # When PROXY_SERVER=caddy
-  └── traefik      # When PROXY_SERVER=traefik
-nomad
+supervisor
+  ├── consul
+  ├── nomad  
+  └── proxy server
+      ├── caddy    # When PROXY_SERVER=caddy
+      └── traefik  # When PROXY_SERVER=traefik
 ```
 
 2. **Proxy Server Selection**
-   - Configurable via PROXY_SERVER environment variable
+   - Configured via PROXY_SERVER environment variable in supervisord.conf
    - Supports both Caddy and Traefik deployments
    - Default: caddy for backward compatibility
 
-3. **Caddy + Consul Template**
-   - Consul-template watches service changes
-   - Dynamic Caddyfile generation
-   - Automatic reload via supervisor
-   - Certificate management via `/pv/CERTS`
+### Traefik Configuration
+1. **Base Configuration**
+   - Located at `/etc/traefik.yaml`
+   - Native integration with Nomad and Consul
+   - No consul-template dependency
+   - Shared certificate storage at `/pv/CERTS`
 
-4. **Traefik Integration**
-   - Native Consul service discovery
-   - Dynamic configuration updates
-   - Shared certificate storage with Caddy
-   - Compatible with existing service tags
+2. **Service Discovery**
+   - Primary: Nomad service discovery
+   - Secondary: Consul Catalog provider
+   - Automatic token handling via environment variables
+   - Default routing based on service names
 
-5. **Environment Configuration**
+3. **Security Features**
+   - Automatic HTTPS redirection
+   - Built-in security headers
+   - TLS certificate management
+   - Prometheus metrics endpoint
+
+4. **Environment Configuration**
    ```bash
    # Supported variables
-   PROXY_SERVER="caddy|traefik"              # Select proxy server (default: caddy)
-   UNKNOWN_SERVICE_404="https://archive.org/about/404.html"
-   TRUSTED_PROXIES="private_ranges"
-   REVERSE_PROXY="hostname:port"
-   ON_DEMAND_TLS_ASK="URL"
-   HTTP_DISABLED=""
+   PROXY_SERVER="caddy|traefik"    # Select proxy server (default: caddy)
+   HTTP_DISABLED=""                # Disable HTTP to HTTPS redirect
+   NOMAD_TOKEN=""                 # Token for Nomad API access
+   CONSUL_HTTP_TOKEN=""           # Token for Consul API access
+   ```
+
+### Process Management
+1. **Supervisor Configuration**
+   - Automatic proxy server selection
+   - Environment variable passing
+   - Graceful restarts
+   - Log streaming to stdout/stderr
+
+2. **Startup Flow**
+   ```
+   1. Supervisor starts Consul and Nomad
+   2. Selected proxy server starts based on PROXY_SERVER
+   3. Proxy connects to service discovery
+   4. Configuration auto-updates based on services
    ```
 
 ## Integration Strategy
