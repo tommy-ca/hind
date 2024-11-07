@@ -84,8 +84,25 @@ service {
 }
 ```
 
-## Feature Comparison
+## Performance Characteristics
 
+### Resource Requirements
+- Minimum Memory: 256MB per proxy instance
+- Recommended CPU: 1-2 cores
+- File Descriptors: min 65535
+- Network Buffers: min 256MB receive/transmit
+
+### Performance Comparison Matrix
+| Metric | Caddy (Current) | Traefik (Proposed) |
+|--------|----------------|-------------------|
+| Memory Footprint | ~50MB idle | ~60MB idle |
+| Requests/sec | 10K+ | 15K+ |
+| P95 Latency | <20ms | <15ms |
+| Max Connections | 10K default | 10K default |
+| Hot Reload Time | <1s | <1s |
+| Config Parse | Template based | Native watch |
+
+### Feature Comparison
 | Feature | Caddy (Current) | Traefik (Proposed) |
 |---------|----------------|-------------------|
 | Auto HTTPS | Yes | Yes |
@@ -95,6 +112,99 @@ service {
 | Metrics | Basic | Prometheus |
 | Hot Reload | Yes | Yes |
 | Rate Limiting | Yes | Yes |
+| Circuit Breaking | No | Yes |
+| Retry Policies | Basic | Advanced |
+| Middleware | Limited | Extensive |
+
+## Failure Modes & Recovery
+
+### Certificate Management
+- Acquisition Failure: Falls back to self-signed
+- Storage Issues: Uses memory cache
+- Renewal Errors: Auto-retry with backoff
+- Validation Errors: Admin notification
+
+### Service Discovery 
+- Consul Unavailable: Cache last known config
+- DNS Failures: Fallback to direct IPs
+- Config Parse Error: Keep previous config
+- Template Error: Alert and retry
+
+### Connection Handling
+- Circuit Breaking: Auto-disable failing backends
+- Connection Draining: 30s grace period
+- Rate Limiting: Per-IP and global limits
+- Buffer Overflow: Automatic request queuing
+
+## Security Implementation
+
+### Header Security
+```yaml
+# Default Security Headers
+security_headers:
+  X-Frame-Options: SAMEORIGIN
+  X-XSS-Protection: "1; mode=block"
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=()
+```
+
+### Access Controls
+1. **IP Filtering**
+   - Allow/deny lists
+   - CIDR range support
+   - Geo-blocking options
+
+2. **Rate Limiting**
+   ```yaml
+   rate_limit:
+     requests_per_second: 100
+     burst: 50
+     response_code: 429
+     cleanup_interval: 10s
+   ```
+
+3. **Authentication**
+   - Basic Auth
+   - JWT validation
+   - Custom header verification
+   - OAuth2 proxy support
+
+4. **WAF Rules**
+   - SQL injection protection
+   - XSS filtering
+   - Path traversal prevention
+   - Request size limits
+
+## Operational Procedures
+
+### Hot Reload Process
+1. Config validation
+2. Graceful connection drain
+3. New config application
+4. Health check verification
+5. Rollback on failure
+
+### Monitoring Points
+1. **Metrics Endpoints**
+   - `/metrics` - Prometheus format
+   - `/health` - Overall status
+   - `/ready` - Readiness status
+
+2. **Log Levels**
+   ```yaml
+   logging:
+     level: INFO
+     format: json
+     output: stdout
+     access_logs: true
+   ```
+
+3. **Debug Procedures**
+   - Config dump endpoint
+   - Connection tracking
+   - TLS certificate inspection
+   - Route testing endpoint
 
 ## Migration Guide
 
