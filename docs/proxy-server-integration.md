@@ -1,12 +1,21 @@
 # Proxy Server Integration Architecture
 
 ## Overview
-HinD currently uses Caddy with consul-template for service routing. This document outlines the integration strategy for supporting multiple proxy implementations while maintaining HinD's simplicity and reliability.
+HinD currently uses Caddy with consul-template for service routing in a shared container environment. This document outlines the integration strategy for supporting Traefik while maintaining HinD's simplicity and reliability.
 
 ## Current Architecture
 
 ### Key Components
-1. **Caddy + Consul Template**
+1. **Process Management**
+
+```
+consul
+  └── consul-template
+      └── caddy
+nomad
+```
+
+2. **Caddy + Consul Template**
    - Consul-template watches service changes
    - Dynamic Caddyfile generation
    - Automatic reload via supervisor
@@ -24,19 +33,28 @@ HinD currently uses Caddy with consul-template for service routing. This documen
 
 ## Integration Strategy
 
-### Phase 1: Proxy Selection Framework
-1. **Environment Variables**
-   ```bash
-   # New proxy selection
-   PROXY_SERVER="caddy"        # or "traefik"
-   ```
+### Phase 1: Traefik Integration
 
-2. **Configuration Files**
-   ```
-   /etc/
-   ├── Caddyfile.ctmpl        # Current Caddy config
-   └── traefik.toml           # New Traefik config
-   ```
+1. **Configuration Files**
+```yaml
+# /etc/traefik/traefik.yaml
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+```
+
+2. **S6-Overlay Service Definition**
+```sh
+# /etc/s6-overlay/s6-rc.d/traefik/run
+#!/command/execlineb -P
+traefik --configfile=/etc/traefik/traefik.yaml
+```
 
 3. **Backward Compatibility**
    - Maintain current environment variables
@@ -209,14 +227,17 @@ security_headers:
 ## Migration Guide
 
 ### For Existing Users
-1. No immediate action required
-2. Current Caddy setups remain supported
-3. Optional opt-in to Traefik via `PROXY_SERVER`
-
-### For New Deployments
+1. Update environment variables:
 ```bash
 export PROXY_SERVER=traefik
-curl -sS https://internetarchive.github.io/hind/install.sh | sudo sh
+```
+
+2. Verify service discovery:
+```bash
+# Check service registration
+nomad status
+# Verify Traefik configuration
+curl localhost:8080/api/rawdata
 ```
 
 ## Security Considerations
@@ -250,17 +271,17 @@ curl -sS https://internetarchive.github.io/hind/install.sh | sudo sh
 
 ## Testing Requirements
 
-### Functional Testing
-- [ ] Proxy selection mechanism
-- [ ] Service discovery with both proxies
-- [ ] TLS certificate management
-- [ ] Environment variable support
+1. **Functional Tests**
+- Service discovery verification
+- Certificate management
+- Environment variable support
+- Load balancing behavior
 
-### Integration Testing
-- [ ] Existing Nomad jobs compatibility
-- [ ] DNS wildcard support
-- [ ] HTTPS automation
-- [ ] Metrics collection
+2. **Integration Tests**
+- Multi-service deployment
+- High availability scenarios
+- Failure recovery
+- Performance benchmarks
 
 ## Future Considerations
 
