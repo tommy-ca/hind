@@ -214,6 +214,92 @@ If issues are encountered:
 | Retry Policies | Basic | Advanced |
 | Middleware | Limited | Extensive |
 
+## Load Balancing Comparison
+
+### Load Balancing Configuration
+
+#### Caddy (Current)
+```hcl
+# Via Consul service tags
+urlprefix-/api/ proto=http lb=round_robin
+```
+
+#### Traefik (New)
+```hcl
+# Basic load balancer config
+service {
+  name = "api"
+  tags = [
+    "traefik.http.services.api.loadbalancer.server.scheme=http",
+    "traefik.http.services.api.loadbalancer.server.port=8080"
+  ]
+}
+
+# With weight
+traefik.http.services.api.loadbalancer.server.weight=10
+```
+
+### Supported Algorithms
+
+| Feature | Caddy | Traefik | Migration Notes |
+|---------|-------|---------|----------------|
+| Round Robin | Yes | Yes | Direct equivalent |
+| Least Conn | No | Yes | Traefik advantage |
+| IP Hash | Via plugin | Built-in | Use Traefik sticky sessions |
+| Random | No | Yes | New capability |
+
+### Health Checks
+
+#### Caddy
+```hcl
+health_check {
+  interval = "30s"
+  timeout  = "5s"
+  method   = "GET"
+  path     = "/health"
+}
+```
+
+#### Traefik
+```hcl
+# Via service tags
+traefik.http.services.api.loadbalancer.healthcheck.path=/health
+traefik.http.services.api.loadbalancer.healthcheck.interval=30s
+traefik.http.services.api.loadbalancer.healthcheck.timeout=5s
+```
+
+### Sticky Sessions
+
+#### Caddy
+```hcl
+# Via cookie-based stickiness
+urlprefix-/api/ sticky
+```
+
+#### Traefik
+```hcl
+# Cookie-based
+traefik.http.services.api.loadbalancer.sticky.cookie=true
+traefik.http.services.api.loadbalancer.sticky.cookie.name=lb_cookie
+
+# Header-based
+traefik.http.services.api.loadbalancer.sticky.cookie.httponly=true
+```
+
+### Server Weights and Distribution
+
+#### Caddy
+```hcl
+# Basic weight via tags
+urlprefix-/api/ weight=10
+```
+
+#### Traefik
+```hcl
+# Detailed weight configuration
+traefik.http.services.api.loadbalancer.server.weight=10
+```
+
 ## Failure Modes & Recovery
 
 ### Certificate Management
