@@ -56,9 +56,21 @@ http:
     conditional-hsts:
       headers:
         customResponseHeaders:
-          Strict-Transport-Security: max-age=15724800
+          Strict-Transport-Security: "max-age=15724800; includeSubDomains"
+      middlewares:
+        - hsts-check
+    hsts-check:
+      headers:
         customRequestHeaders:
-          X-HSTS: on
+          X-HSTS: "on"
+      middlewares:
+        - hsts-filter
+    hsts-filter:
+      plugin:
+        headerCheck:
+          header: X-HSTS
+          value: "off"
+          invert: true
     http-disabled:
       headers:
         customResponseHeaders:
@@ -92,6 +104,7 @@ http:
   services:
     default: &service-defaults
       loadBalancer:
+        strategy: leastconn
         healthCheck: &health-defaults
           interval: 10s
           timeout: 5s
