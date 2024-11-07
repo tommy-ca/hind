@@ -10,20 +10,33 @@ HinD currently uses Caddy with consul-template for service routing in a shared c
 
 ```
 consul
-  └── consul-template
-      └── caddy
+  ├── consul-template
+  │   └── caddy    # When PROXY_SERVER=caddy
+  └── traefik      # When PROXY_SERVER=traefik
 nomad
 ```
 
-2. **Caddy + Consul Template**
+2. **Proxy Server Selection**
+   - Configurable via PROXY_SERVER environment variable
+   - Supports both Caddy and Traefik deployments
+   - Default: caddy for backward compatibility
+
+3. **Caddy + Consul Template**
    - Consul-template watches service changes
    - Dynamic Caddyfile generation
    - Automatic reload via supervisor
    - Certificate management via `/pv/CERTS`
 
-2. **Environment Configuration**
+4. **Traefik Integration**
+   - Native Consul service discovery
+   - Dynamic configuration updates
+   - Shared certificate storage with Caddy
+   - Compatible with existing service tags
+
+5. **Environment Configuration**
    ```bash
-   # Current supported variables
+   # Supported variables
+   PROXY_SERVER="caddy|traefik"              # Select proxy server (default: caddy)
    UNKNOWN_SERVICE_404="https://archive.org/about/404.html"
    TRUSTED_PROXIES="private_ranges"
    REVERSE_PROXY="hostname:port"
