@@ -123,7 +123,43 @@ supervisor
    HTTP_DISABLED=""                # Disable HTTP to HTTPS redirect
    NOMAD_TOKEN=""                 # Token for Nomad API access
    CONSUL_HTTP_TOKEN=""           # Token for Consul API access
+   TRAEFIK_PROVIDER_PRIMARY="nomad|consul"  # Primary service discovery (default: nomad)
    ```
+
+### Service Discovery Provider Selection
+
+When using Traefik, you can choose between two service discovery providers:
+
+#### Nomad Primary (Default)
+```yaml
+# Applied when TRAEFIK_PROVIDER_PRIMARY=nomad
+providers:
+  nomad:
+    endpoint: "http://127.0.0.1:4646"
+    stale: false
+    exposedByDefault: false
+  consul:
+    endpoint: "http://127.0.0.1:8500"
+    exposedByDefault: false
+    watch: true
+    refreshInterval: "30s"
+```
+
+#### Consul Primary
+```yaml
+# Applied when TRAEFIK_PROVIDER_PRIMARY=consul
+providers:
+  consul:
+    endpoint: "http://127.0.0.1:8500"
+    exposedByDefault: false
+    watch: true
+    refreshInterval: "15s"
+  nomad:
+    endpoint: "http://127.0.0.1:4646"
+    stale: false
+    exposedByDefault: false
+    refreshInterval: "30s"
+```
 
 ### Process Management
 1. **Supervisor Configuration**
@@ -241,7 +277,18 @@ service {
 ### Migration Validation Steps
 1. Add Traefik tags alongside existing Caddy tags
 2. Set PROXY_SERVER=traefik to test new configuration
-3. Verify routes work as expected:
+3. Verify provider configuration:
+   ```bash
+   # Check current provider configuration
+   curl -s localhost:8080/api/rawdata | jq '.providers'
+
+   # Verify service registration (Nomad)
+   nomad status
+
+   # Verify service registration (Consul)
+   curl -s localhost:8500/v1/catalog/services
+   ```
+4. Verify routes work as expected:
    ```bash
    # Test host-based routing
    curl -H "Host: webapp.example.com" localhost
